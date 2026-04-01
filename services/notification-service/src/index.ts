@@ -6,6 +6,7 @@ import { db } from "./db";
 import { notifications } from "./db/schema";
 import { desc } from "drizzle-orm";
 import { addClient, removeClient } from "./realtime";
+import { metricsResponse, withHttpObservability } from "./observability.js";
 
 const notificationPayload = t.Object({
   orderId: t.String({ format: "uuid" }),
@@ -62,14 +63,14 @@ const app = new Elysia()
   )
   .get(
     "/api/notifications",
-    async () => {
+    withHttpObservability("/api/notifications", async () => {
       const results = await db
         .select()
         .from(notifications)
         .orderBy(desc(notifications.sentAt));
 
       return results.map(serializeNotification);
-    },
+    }),
     {
       detail: {
         tags: ["Notifications"],
@@ -103,7 +104,10 @@ const app = new Elysia()
   })
   .get(
     "/health",
-    () => ({ status: "ok", service: "notification-service" }),
+    withHttpObservability("/health", () => ({
+      status: "ok",
+      service: "notification-service",
+    })),
     {
       detail: {
         tags: ["Notifications"],
@@ -114,6 +118,16 @@ const app = new Elysia()
           status: t.String(),
           service: t.String(),
         }),
+      },
+    },
+  )
+  .get(
+    "/metrics",
+    withHttpObservability("/metrics", async () => metricsResponse()),
+    {
+      detail: {
+        tags: ["Notifications"],
+        summary: "Prometheus metrics",
       },
     },
   )
