@@ -6,6 +6,17 @@ import { orders } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { publishEvent } from "./events";
 import { releaseInventory, reserveInventory } from "./inventory";
+import {
+  injectTraceContext,
+  logError,
+  logInfo,
+  metricsResponse,
+  orderEventsPublishedTotal,
+  ordersTotal,
+  reservationAttemptsTotal,
+  tracedFetch,
+  withHttpObservability,
+} from "./observability.js";
 
 const CATALOG_SERVICE_URL =
   process.env.CATALOG_SERVICE_URL || "http://localhost:3001";
@@ -74,11 +85,25 @@ const app = new Elysia()
   )
   .post(
     "/api/orders",
-    async ({ body, status }) => {
-      const lensResponse = await fetch(
+    withHttpObservability("/api/orders", async (ctx: any, obs: any) => {
+      const { body, status } = ctx;
+      const propagationHeaders = injectTraceContext({
+        "x-correlation-id": obs.correlationId,
+      });
+
+      const lensResponse = await tracedFetch(
         `${CATALOG_SERVICE_URL}/api/lenses/${body.lensId}`,
+        {
+          headers: propagationHeaders,
+        },
+        {
+          "peer.service": "catalog-service",
+          "http.route": "/api/lenses/:id",
+        },
       );
+
       if (!lensResponse.ok) {
+        ordersTotal.labels("failed", "lens_not_found").inc();
         return status(404, { error: "Lens not found" });
       }
       const lens = (await lensResponse.json()) as CatalogLens;
@@ -89,6 +114,7 @@ const app = new Elysia()
         (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24),
       );
       if (days <= 0) {
+        ordersTotal.labels("failed", "invalid_date_range").inc();
         return status(400, { error: "End date must be after start date" });
       }
       const totalPrice = (days * parseFloat(lens.dayPrice)).toFixed(2);
@@ -101,11 +127,15 @@ const app = new Elysia()
         lensId: body.lensId,
         branchCode,
         quantity,
-      });
+      }, propagationHeaders);
 
       if (!reservation.ok) {
+        reservationAttemptsTotal.labels("failed").inc();
+        ordersTotal.labels("failed", "inventory_reservation_failed").inc();
         return status(reservation.status, { error: reservation.error });
       }
+
+      reservationAttemptsTotal.labels("success").inc();
 
       const [order] = await db
         .insert(orders)
@@ -127,7 +157,8 @@ const app = new Elysia()
         })
         .returning();
       if (!order) {
-        await releaseInventory(orderId);
+        await releaseInventory(orderId, propagationHeaders);
+        ordersTotal.labels("failed", "db_insert_failed").inc();
         return status(500, { error: "Failed to create order" });
       }
 
@@ -138,10 +169,21 @@ const app = new Elysia()
         lensName: lens.modelName,
         branchCode,
         quantity,
+      }, { correlationId: obs.correlationId });
+
+      orderEventsPublishedTotal.labels("order.placed", "success").inc();
+      ordersTotal.labels("success", "created").inc();
+
+      logInfo("order.created", {
+        order_id: order.id,
+        lens_id: body.lensId,
+        branch_code: branchCode,
+        customer_email: body.customerEmail,
+        correlation_id: obs.correlationId,
       });
 
       return status(201, serializeOrder(order));
-    },
+    }),
     {
       detail: {
         tags: ["Orders"],
@@ -168,10 +210,10 @@ const app = new Elysia()
   )
   .get(
     "/api/orders",
-    async () => {
+    withHttpObservability("/api/orders", async () => {
       const results = await db.select().from(orders);
       return results.map(serializeOrder);
-    },
+    }),
     {
       detail: {
         tags: ["Orders"],
@@ -184,7 +226,8 @@ const app = new Elysia()
   )
   .get(
     "/api/orders/:id",
-    async ({ params, status }) => {
+    withHttpObservability("/api/orders/:id", async (ctx: any) => {
+      const { params, status } = ctx;
       const results = await db
         .select()
         .from(orders)
@@ -193,7 +236,7 @@ const app = new Elysia()
         return status(404, { error: "Order not found" });
       }
       return serializeOrder(results[0]);
-    },
+    }),
     {
       detail: {
         tags: ["Orders"],
@@ -210,7 +253,10 @@ const app = new Elysia()
   )
   .get(
     "/health",
-    () => ({ status: "ok", service: "order-service" }),
+    withHttpObservability("/health", () => ({
+      status: "ok",
+      service: "order-service",
+    })),
     {
       detail: {
         tags: ["Orders"],
@@ -221,6 +267,16 @@ const app = new Elysia()
           status: t.String(),
           service: t.String(),
         }),
+      },
+    },
+  )
+  .get(
+    "/metrics",
+    withHttpObservability("/metrics", async () => metricsResponse()),
+    {
+      detail: {
+        tags: ["Orders"],
+        summary: "Prometheus metrics",
       },
     },
   )
