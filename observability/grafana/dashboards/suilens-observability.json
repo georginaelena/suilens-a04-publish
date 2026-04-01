@@ -1,0 +1,83 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(suilens_http_requests_total[1m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "title": "Request Rate per Service",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(suilens_http_request_duration_seconds_bucket[5m])) by (le, service))",
+          "legendFormat": "{{service}} p95"
+        }
+      ],
+      "title": "Latency p95 per Service",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(suilens_http_requests_total{status=~\"5..\"}[5m])) by (service) / clamp_min(sum(rate(suilens_http_requests_total[5m])) by (service), 1e-9)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "title": "Error Rate (5xx)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(suilens_orders_total{status=\"success\"})",
+          "legendFormat": "orders_success"
+        },
+        {
+          "expr": "sum(suilens_orders_total{status=\"failed\"})",
+          "legendFormat": "orders_failed"
+        },
+        {
+          "expr": "sum(suilens_inventory_reservations_total{status=\"success\"})",
+          "legendFormat": "reservations_success"
+        },
+        {
+          "expr": "sum(suilens_notifications_total)",
+          "legendFormat": "notifications_total"
+        }
+      ],
+      "title": "Business Metrics",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["suilens", "observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "SuiLens Observability Dashboard",
+  "timezone": "",
+  "version": 1
+}
