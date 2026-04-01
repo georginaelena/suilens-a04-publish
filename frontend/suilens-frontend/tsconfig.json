@@ -8,8 +8,13 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ESNext",
-    "strict": false,
-    "types": ["vite/client"]
+    "strict": false
   },
-  "include": ["src/**/*.js", "src/**/*.vue", "src/**/*.ts", "vite.config.mjs"]
+  "include": [
+    "src/**/*.js",
+    "src/**/*.vue",
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "vite.config.mjs"
+  ]
 }
