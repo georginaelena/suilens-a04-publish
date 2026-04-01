@@ -4,6 +4,11 @@ import { swagger } from "@elysiajs/swagger";
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { branches, inventory, reservations } from "./db/schema";
+import {
+  inventoryReservationsTotal,
+  metricsResponse,
+  withHttpObservability,
+} from "./observability.js";
 
 const branchResponse = t.Object({
   code: t.String(),
@@ -60,7 +65,7 @@ const app = new Elysia()
   )
   .get(
     "/api/branches",
-    async () => db.select().from(branches),
+    withHttpObservability("/api/branches", async () => db.select().from(branches)),
     {
       detail: {
         tags: ["Inventory"],
@@ -73,7 +78,8 @@ const app = new Elysia()
   )
   .get(
     "/api/inventory/lenses/:lensId",
-    async ({ params }) => {
+    withHttpObservability("/api/inventory/lenses/:lensId", async (ctx: any) => {
+      const { params } = ctx;
       const rows = await db
         .select({
           lensId: inventory.lensId,
@@ -89,7 +95,7 @@ const app = new Elysia()
         .where(eq(inventory.lensId, params.lensId));
 
       return rows;
-    },
+    }),
     {
       detail: {
         tags: ["Inventory"],
@@ -105,7 +111,8 @@ const app = new Elysia()
   )
   .post(
     "/api/inventory/reserve",
-    async ({ body, status }) => {
+    withHttpObservability("/api/inventory/reserve", async (ctx: any) => {
+      const { body, status } = ctx;
       const existingReservation = await db
         .select()
         .from(reservations)
@@ -133,6 +140,7 @@ const app = new Elysia()
       }
 
       if (existingReservation[0]) {
+        inventoryReservationsTotal.labels("failed", "duplicate").inc();
         return status(409, {
           error: "Inventory reservation already exists for this order",
         });
@@ -152,10 +160,12 @@ const app = new Elysia()
         const stock = stockRows[0];
 
         if (!stock) {
+          inventoryReservationsTotal.labels("failed", "not_found").inc();
           return status(404, { error: "Inventory record not found" });
         }
 
         if (stock.availableQuantity < body.quantity) {
+          inventoryReservationsTotal.labels("failed", "insufficient_stock").inc();
           return status(409, {
             error: "Selected branch does not have enough stock",
           });
@@ -176,6 +186,8 @@ const app = new Elysia()
           quantity: body.quantity,
         });
 
+        inventoryReservationsTotal.labels("success", "reserved").inc();
+
         return {
           success: true,
           orderId: body.orderId,
@@ -185,7 +197,7 @@ const app = new Elysia()
           availableQuantity: updatedStock?.availableQuantity ?? 0,
         };
       });
-    },
+    }),
     {
       detail: {
         tags: ["Inventory"],
@@ -206,8 +218,9 @@ const app = new Elysia()
   )
   .post(
     "/api/inventory/release",
-    async ({ body }) =>
-      db.transaction(async (tx) => {
+    withHttpObservability("/api/inventory/release", async (ctx: any) => {
+      const { body } = ctx;
+      return db.transaction(async (tx) => {
         const reservationRows = await tx
           .select()
           .from(reservations)
@@ -257,7 +270,8 @@ const app = new Elysia()
           orderId: body.orderId,
           released: true,
         };
-      }),
+      });
+    }),
     {
       detail: {
         tags: ["Inventory"],
@@ -273,7 +287,10 @@ const app = new Elysia()
   )
   .get(
     "/health",
-    () => ({ status: "ok", service: "inventory-service" }),
+    withHttpObservability("/health", () => ({
+      status: "ok",
+      service: "inventory-service",
+    })),
     {
       detail: {
         tags: ["Inventory"],
@@ -284,6 +301,16 @@ const app = new Elysia()
           status: t.String(),
           service: t.String(),
         }),
+      },
+    },
+  )
+  .get(
+    "/metrics",
+    withHttpObservability("/metrics", async () => metricsResponse()),
+    {
+      detail: {
+        tags: ["Inventory"],
+        summary: "Prometheus metrics",
       },
     },
   )
