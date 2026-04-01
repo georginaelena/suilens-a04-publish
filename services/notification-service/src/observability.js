@@ -3,6 +3,7 @@ import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { Counter, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 
 const SERVICE_NAME = process.env.SERVICE_NAME || "notification-service";
@@ -11,6 +12,9 @@ const OTLP_ENDPOINT =
   "http://localhost:4318/v1/traces";
 
 const provider = new NodeTracerProvider({
+  resource: resourceFromAttributes({
+    "service.name": SERVICE_NAME,
+  }),
   spanProcessors: [
     new BatchSpanProcessor(new OTLPTraceExporter({ url: OTLP_ENDPOINT })),
   ],
