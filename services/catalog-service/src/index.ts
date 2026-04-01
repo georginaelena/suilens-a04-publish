@@ -4,6 +4,11 @@ import { swagger } from "@elysiajs/swagger";
 import { db } from "./db";
 import { lenses } from "./db/schema";
 import { eq } from "drizzle-orm";
+import {
+  catalogReadTotal,
+  metricsResponse,
+  withHttpObservability,
+} from "./observability.js";
 
 const lensResponse = t.Object({
   id: t.String({ format: "uuid" }),
@@ -48,10 +53,11 @@ const app = new Elysia()
   )
   .get(
     "/api/lenses",
-    async () => {
+    withHttpObservability("/api/lenses", async () => {
       const results = await db.select().from(lenses);
+      catalogReadTotal.labels("list").inc();
       return results.map(serializeLens);
-    },
+    }),
     {
       detail: {
         tags: ["Catalog"],
@@ -65,7 +71,8 @@ const app = new Elysia()
   )
   .get(
     "/api/lenses/:id",
-    async ({ params, status }) => {
+    withHttpObservability("/api/lenses/:id", async (ctx: any) => {
+      const { params, status } = ctx;
       const results = await db
         .select()
         .from(lenses)
@@ -73,8 +80,9 @@ const app = new Elysia()
       if (!results[0]) {
         return status(404, { error: "Lens not found" });
       }
+      catalogReadTotal.labels("by_id").inc();
       return serializeLens(results[0]);
-    },
+    }),
     {
       detail: {
         tags: ["Catalog"],
@@ -92,7 +100,10 @@ const app = new Elysia()
   )
   .get(
     "/health",
-    () => ({ status: "ok", service: "catalog-service" }),
+    withHttpObservability("/health", () => ({
+      status: "ok",
+      service: "catalog-service",
+    })),
     {
       detail: {
         tags: ["Catalog"],
@@ -103,6 +114,16 @@ const app = new Elysia()
           status: t.String(),
           service: t.String(),
         }),
+      },
+    },
+  )
+  .get(
+    "/metrics",
+    withHttpObservability("/metrics", async () => metricsResponse()),
+    {
+      detail: {
+        tags: ["Catalog"],
+        summary: "Prometheus metrics",
       },
     },
   )
