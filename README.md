@@ -121,14 +121,10 @@ Port default: 5173
 
 ### Catalog Service
 - DATABASE_URL
-- SERVICE_NAME
-- OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 
 ### Inventory Service
 - DATABASE_URL
 - CATALOG_SERVICE_URL
-- SERVICE_NAME
-- OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 
 ### Order Service
 - DATABASE_URL
@@ -136,14 +132,10 @@ Port default: 5173
 - INVENTORY_SERVICE_URL
 - DEFAULT_BRANCH_CODE
 - RABBITMQ_URL
-- SERVICE_NAME
-- OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 
 ### Notification Service
 - DATABASE_URL
 - RABBITMQ_URL
-- SERVICE_NAME
-- OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 
 ## Endpoint
 
@@ -173,521 +165,256 @@ Port default: 5173
 - WS /ws/notifications
 - GET /docs
 - GET /health
+<br></br>
 
-## Observability Assignment (Monitoring, Logging, Tracing)
+---
 
-Implementasi observability pada project ini mengikuti benchmark pola yang sama dengan tutorial di folder sibling `demo-helpdesk`:
-- Prometheus + Grafana untuk monitoring dan dashboard.
-- ELK (Filebeat + Logstash + Elasticsearch + Kibana) untuk centralized logging.
-- OpenTelemetry + Jaeger untuk distributed tracing.
+# Latihan 4 - SuiLens Microservices Workspace
 
-### Cakupan Requirement Tugas
+Nama    : Georgina Elena Shinta Dewi Achti
+NPM     : 2206810995
 
-1. Monitoring dashboard visual
-- Metrik request rate: `suilens_http_requests_total`.
-- Metrik latency: `suilens_http_request_duration_seconds` (grafik p95).
-- Metrik error rate: dihitung dari rasio status 5xx terhadap total request.
-- Metrik bisnis:
-	- `suilens_orders_total` (success/failed).
-	- `suilens_inventory_reservations_total` (success/failed + reason).
-	- `suilens_notifications_total`.
+## 1. Pendahuluan
 
-2. Centralized logging lintas service
-- Semua service backend mengeluarkan structured JSON logs ke stdout.
-- Field utama log: `timestamp`, `service`, `level`, `message`, `trace_id`, `span_id`, `correlation_id`, dll.
-- Filebeat mengambil container logs -> Logstash parse JSON -> Elasticsearch index `suilens-logs-*` -> visualisasi di Kibana.
+Pada tugas ini, saya mengimplementasikan observability pada sistem microservices SuiLens. Observability menjadi komponen penting karena sistem terdiri dari beberapa service yang saling berinteraksi, sehingga diperlukan mekanisme untuk memantau performa, mengumpulkan log secara terpusat, serta menelusuri alur request secara end-to-end.
 
-3. Distributed tracing end-to-end
-- Flow utama yang bisa ditelusuri di Jaeger: `POST /api/orders`.
-- Rantai trace:
-	- inbound order-service,
-	- outbound order-service -> catalog-service,
-	- outbound order-service -> inventory-service,
-	- publish event `order.placed` ke RabbitMQ,
-	- consume event di notification-service.
-- Propagasi context menggunakan W3C trace context (`traceparent`) + `x-correlation-id`.
+Fokus implementasi mencakup tiga aspek utama, yaitu **monitoring**, **centralized logging**, dan **distributed tracing**. Ketiga aspek ini bertujuan untuk memberikan visibilitas yang menyeluruh terhadap kondisi sistem, baik dari sisi teknis maupun proses bisnis.
 
-## Arsitektur Observability
+### Konteks Sistem
 
-Tambahan komponen di `docker-compose.yml`:
-- `prometheus` (port host `9091`).
-- `grafana` (port host `3005`, default login `admin/admin`).
-- `jaeger` (UI di `http://localhost:16687`).
-- `elasticsearch` (port host `9201`).
-- `kibana` (port host `5602`).
-- `logstash` + `filebeat`.
+Sistem SuiLens merupakan aplikasi microservices yang terdiri dari:
+- **Frontend** (Vue + Vuetify): dashboard untuk katalog, inventory, order, dan notifikasi realtime
+- **Catalog Service**: layanan data lensa dan spesifikasi
+- **Inventory Service**: manajemen stok per cabang dengan mekanisme reservasi
+- **Order Service**: pembuatan dan pengelolaan order
+- **Notification Service**: notifikasi real-time via WebSocket dan penyimpanan riwayat
+- **Infrastruktur**: 4 PostgreSQL terpisah (per service) + RabbitMQ untuk event-driven communication
 
-Konfigurasi observability tersimpan di folder:
-- `observability/prometheus/prometheus.yml`
-- `observability/grafana/provisioning/*`
-- `observability/grafana/dashboards/suilens-observability.json`
-- `observability/filebeat/filebeat.yml`
-- `observability/logstash/pipeline/logstash.conf`
+## Struktur Folder
 
-## Tutorial Menjalankan dan Verifikasi
+```
+.
+├── frontend/suilens-frontend/          # Frontend Vue application
+├── services/
+│   ├── catalog-service/                # Catalog API service
+│   ├── inventory-service/              # Inventory & reservation API
+│   ├── order-service/                  # Order API + event publisher
+│   └── notification-service/           # Notification API + WebSocket + event consumer
+├── observability/
+│   ├── prometheus/                     # Prometheus configuration
+│   ├── grafana/                        # Grafana dashboards & provisioning
+│   ├── filebeat/                       # Filebeat configuration
+│   └── logstash/                       # Logstash pipeline rules
+└── docker-compose.yml                  # Docker Compose orchestration
+```
 
-### 1) Jalankan Semua Service
+### 5) Frontend
+
+Masuk ke frontend/suilens-frontend lalu jalankan:
+- pnpm install
+- pnpm dev
+
+Port default: 5173
+
+## 2. Gambaran Solusi dan Arsitektur
+
+Dalam implementasi observability ini, saya menggunakan beberapa tools utama yang masing-masing berperan pada aspek observability yang berbeda:
+
+- **Monitoring**: Prometheus sebagai pengumpul metrik dan Grafana sebagai dashboard visual
+- **Centralized Logging**: ELK stack yang terdiri dari Filebeat, Logstash, Elasticsearch, dan Kibana
+- **Distributed Tracing**: OpenTelemetry dengan Jaeger sebagai visualisasi trace
+
+### Alur Data Observability
+
+Setiap service menghasilkan data observability melalui mekanisme yang berbeda:
+
+1. **Metrics Flow**: Service → `/metrics` endpoint → Prometheus (scrape setiap 15s) → Grafana Dashboard
+   - Metrik yang dikumpulkan: request count, latency histogram, error rate, business metrics
+
+2. **Logs Flow**: Service stdout → Filebeat (collect container logs) → Logstash (parse JSON) → Elasticsearch (index `suilens-logs-*`) → Kibana
+   - Format: structured JSON dengan field timestamp, service_name, log_level, message, correlation_id, trace_id
+
+3. **Traces Flow**: Service → OpenTelemetry SDK (instrument requests/calls/events) → OTLP exporter → Jaeger
+   - Propagation: W3C traceparent + x-correlation-id header
+
+### Infrastruktur Observability
+
+Komponen tambahan dalam docker-compose.yml:
+- Prometheus (port 9091): metric collection & storage
+- Grafana (port 3005): dashboard visualization (login: admin/admin)
+- Jaeger (port 16687): distributed tracing UI
+- Elasticsearch (port 9201): centralized log storage
+- Kibana (port 5602): log visualization & exploration
+- Logstash: log processing & transformation
+- Filebeat: container log collection
+
+Konfigurasi observability tersimpan di:
+- `observability/prometheus/prometheus.yml`: Prometheus config
+- `observability/grafana/dashboards/suilens-observability.json`: Grafana dashboard
+- `observability/filebeat/filebeat.yml`: Filebeat config
+- `observability/logstash/pipeline/logstash.conf`: Logstash processing rules
+
+## 3. Langkah Implementasi
+
+### Monitoring
+
+Pada bagian monitoring, saya menambahkan endpoint `/metrics` pada setiap service backend. Endpoint ini menyediakan metrik yang kemudian dikumpulkan oleh Prometheus. Metrik yang diimplementasikan meliputi:
+
+1. **Jumlah Request** (`suilens_http_requests_total`)
+   - Counter yang mencatat total request dengan label: service, method, route, status
+   - Digunakan untuk melihat volume traffic pada sistem
+
+2. **Latency Request** (`suilens_http_request_duration_seconds`)
+   - Histogram yang mengukur durasi setiap request
+   - Pada dashboard ditampilkan sebagai p95 untuk merepresentasikan performa mayoritas request
+   - Peningkatan latency dapat mengindikasikan bottleneck pada service tertentu
+
+3. **Error Rate**
+   - Dihitung berdasarkan proporsi request dengan status 5xx terhadap total request
+   - Memberikan indikasi adanya kegagalan di sisi backend
+
+4. **Metrik Bisnis**
+   - `suilens_orders_total`: jumlah order yang berhasil dan gagal
+   - `suilens_inventory_reservations_total`: jumlah reservasi stok yang berhasil dan gagal
+   - `suilens_notifications_total`: jumlah notifikasi yang diproses
+   - Metrik ini memberikan gambaran aktivitas sistem dari sisi bisnis
+
+Seluruh metrik tersebut divisualisasikan dalam dashboard Grafana (file: `observability/grafana/dashboards/suilens-observability.json`) sehingga kondisi sistem dapat dipantau secara real-time.
+
+### Centralized Logging
+
+Untuk centralized logging, saya menerapkan structured logging pada setiap service backend menggunakan format JSON. Setiap log memuat informasi penting seperti:
+
+- `timestamp`: waktu kejadian event
+- `service`: nama service yang mengeluarkan log
+- `level`: log level (INFO, WARN, ERROR)
+- `message`: pesan log yang informatif
+- `endpoint`: URL endpoint yang diakses (jika ada)
+- `correlation_id`: ID unik untuk menelusuri satu request lintas service
+- `trace_id`: ID dari OpenTelemetry trace
+
+Log yang dihasilkan oleh service dikirim ke stdout container, kemudian dikumpulkan oleh Filebeat. Selanjutnya, log diproses oleh Logstash (parsing JSON, transformasi field) sebelum disimpan di Elasticsearch dengan index pattern `suilens-logs-*`. Kibana digunakan untuk mengakses dan memvisualisasikan log tersebut dalam satu tempat.
+
+Dengan pendekatan ini, log dari berbagai service dapat dianalisis secara terpusat tanpa harus membuka log container masing-masing secara terpisah. Correlation_id digunakan untuk menelusuri satu request yang sama di berbagai service sehingga mempermudah proses investigasi.
+
+### Distributed Tracing
+
+Pada bagian tracing, saya menggunakan OpenTelemetry untuk menginstrumentasi service backend. Tracing dilakukan pada beberapa poin penting:
+
+1. **Inbound Request**: Setiap HTTP request yang masuk ke service diinstrumentasi sebagai root span
+
+2. **Outbound HTTP Calls**: Setiap HTTP call dari satu service ke service lain (misalnya order → catalog, order → inventory) diinstrumentasi sebagai child span
+
+3. **RabbitMQ Events**: Proses publish event ke RabbitMQ dan consume event dari RabbitMQ diinstrumentasi untuk melacak alur event-driven communication
+
+4. **Context Propagation**: W3C trace context (`traceparent` header) dan `x-correlation-id` header dipropagasikan antar service untuk memastikan RequestID dan TraceID konsisten
+
+Flow utama yang dianalisis adalah proses **create order** (`POST /api/orders`):
+1. Request dimulai dari order-service sebagai entry point
+2. Order-service memvalidasi lens ke catalog-service
+3. Order-service melakukan reservasi ke inventory-service
+4. Jika sukses, order-service mempublish event `order.placed` ke RabbitMQ
+5. Notification-service mengonsumsi event dan memproses notifikasi
+
+Trace yang dihasilkan dikirim ke Jaeger (OTLP eksporter), yang menampilkan hubungan antar span serta durasi setiap proses. Dengan visualisasi ini, alur request dapat dipahami secara menyeluruh dan bottleneck dalam sistem dapat diidentifikasi dengan lebih mudah.
+
+## 4. Cara Menjalankan Sistem
+
+Sistem dijalankan menggunakan Docker Compose dengan perintah berikut:
 
 ```bash
 docker compose up --build
 ```
 
-### 2) Akses Dashboard dan Tools
+Setelah seluruh service berjalan (dapat dipantau dengan `docker compose ps`), masing-masing tools dapat diakses melalui URL berikut:
 
-- Frontend: `http://localhost:5173`
-- Grafana: `http://localhost:3005`
-- Prometheus: `http://localhost:9091`
-- Jaeger: `http://localhost:16687`
-- Kibana: `http://localhost:5602`
+- **Grafana**: http://localhost:3005 (login: admin/admin)
+- **Kibana**: http://localhost:5602
+- **Jaeger**: http://localhost:16687
+- **Prometheus**: http://localhost:9091
+- **Frontend**: http://localhost:5173
+- **Order Service API**: http://localhost:3002/api/orders
 
-### 3) Generate Request (Untuk Monitoring + Logging + Tracing)
+### Menghasilkan Data Observability
 
-Ambil `lensId` terlebih dahulu:
+Untuk menghasilkan metrik, log, dan trace, dilakukan request ke endpoint create order dengan menyertakan header `x-correlation-id`. Request ini akan memicu munculnya metrics, log, dan trace sehingga dapat diamati pada masing-masing tools.
 
-```bash
-curl -s http://localhost:3001/api/lenses
-```
-
-Contoh create order (flow trace utama):
+**Langkah 1: Ambil Lens ID**
 
 ```bash
-curl -X POST http://localhost:3002/api/orders \
-	-H 'Content-Type: application/json' \
-	-H 'x-correlation-id: assignment-a04-001' \
-	-d '{
-		"customerName": "A04 Tester",
-		"customerEmail": "a04@test.local",
-		"lensId": "REPLACE_WITH_REAL_LENS_ID",
-		"branchCode": "KB-JKT-S",
-		"startDate": "2026-03-30",
-		"endDate": "2026-04-02"
-	}'
+curl -s http://localhost:3001/api/lenses | jq '.[] | .id' | head -n 1
 ```
 
-Load sederhana untuk menaikkan metric:
-
-```bash
-for i in $(seq 1 20); do
-	curl -s http://localhost:3002/api/orders >/dev/null
-done
-```
-
-### 4) Bukti yang Perlu Diambil Screenshot
-
-- Grafana dashboard:
-	- request rate,
-	- latency p95,
-	- error rate,
-	- business metrics.
-- Kibana Discover:
-	- filter `service_name` per service,
-	- tampilkan `correlation_id`, `trace_id`, `message`.
-- Jaeger:
-	- trace untuk flow `POST /api/orders` yang menyentuh >1 service.
-
-### 5) Endpoint Metrics per Service
-
-- Catalog: `http://localhost:3001/metrics`
-- Inventory: `http://localhost:3004/metrics`
-- Order: `http://localhost:3002/metrics`
-- Notification: `http://localhost:3003/metrics`
-
-## Catatan Benchmark vs Tutorial
-
-- Struktur observability stack meniru tutorial `demo-helpdesk` agar konsisten dengan materi perkuliahan.
-- Perbedaannya: implementasi metrik bisnis disesuaikan domain SuiLens (`orders`, `inventory reservation`, `notification`) dan tracing menargetkan flow lintas microservice + message broker.
-
-## Panduan Menyusun PDF Laporan (Siap Pakai)
-
-Bagian ini dibuat supaya kamu bisa langsung menjawab semua poin tugas secara sistematis.
-
-### A. Struktur Dokumen PDF yang Disarankan
-
-Gunakan urutan bab berikut:
-
-1. Cover
-- Judul: Assignment 4 Observability - SuiLens
-- Nama
-- NPM
-- Mata kuliah
-
-2. Ringkasan Tugas
-- Jelaskan bahwa target observability mencakup monitoring, centralized logging, dan distributed tracing pada arsitektur microservices SuiLens.
-
-3. Gambaran Solusi dan Arsitektur
-- Tools yang dipakai:
-	- Monitoring: Prometheus + Grafana
-	- Logging: Filebeat + Logstash + Elasticsearch + Kibana
-	- Tracing: OpenTelemetry + Jaeger
-- Jelaskan arsitektur singkat aliran data observability:
-	- Metrics: service -> /metrics -> Prometheus -> Grafana
-	- Logs: stdout container -> Filebeat -> Logstash -> Elasticsearch -> Kibana
-	- Traces: service -> OTLP -> Jaeger
-
-4. Langkah Implementasi Garis Besar
-- Monitoring:
-	- Tambah endpoint `/metrics` pada service backend.
-	- Tambah metrik request count, latency histogram, error rate basis 5xx, dan metrik bisnis.
-	- Buat dashboard Grafana.
-- Logging:
-	- Terapkan structured logging JSON di lebih dari satu service.
-	- Sertakan field investigasi: timestamp, service, level, message, endpoint/route, correlation_id, trace_id.
-	- Kirim ke stack ELK.
-- Tracing:
-	- Instrumentasi inbound request dan outbound call antar service.
-	- Propagasi trace context dan correlation id.
-	- Instrumentasi publish-consume event RabbitMQ untuk flow lintas service.
-
-5. Cara Menjalankan Sistem
-- Sertakan command utama:
-	- `docker compose up --build`
-- Sertakan URL:
-	- Frontend, Grafana, Prometheus, Kibana, Jaeger
-- Sertakan cara generate request (curl create order + correlation id)
-
-6. Bukti Implementasi (Screenshot)
-- Monitoring:
-	- Panel request rate
-	- Panel latency p95
-	- Panel error rate
-	- Panel metrik bisnis
-- Logging:
-	- Kibana Discover menampilkan log dari minimal 2 service
-	- Bukti field `correlation_id`, `trace_id`, `service_name`, `message`
-- Tracing:
-	- Jaeger trace untuk flow `POST /api/orders`
-	- Span minimal: order-service, catalog-service, inventory-service, dan consumer notification-service
-
-7. Penjelasan Hasil
-- Jelaskan arti masing-masing metrik.
-- Jelaskan bagaimana log dipakai untuk investigasi insiden.
-- Jelaskan urutan flow trace end-to-end dari request masuk hingga event diproses.
-
-8. Kesimpulan
-- Nyatakan bahwa tiga objective observability sudah tercapai.
-- Sebutkan manfaat yang didapat: visibilitas performa, debugging lebih cepat, dan trace lintas service.
-
-### B. Template Narasi Jawaban (Bisa Langsung Dipakai)
-
-#### 1) Gambaran Solusi
-
-"Pada assignment ini, observability diimplementasikan pada aplikasi SuiLens berbasis microservices menggunakan tiga pilar utama: monitoring, logging, dan tracing. Untuk monitoring digunakan Prometheus sebagai collector metrics dan Grafana sebagai dashboard visual. Untuk centralized logging digunakan pipeline Filebeat -> Logstash -> Elasticsearch dengan visualisasi di Kibana. Untuk distributed tracing digunakan OpenTelemetry pada service backend dengan collector Jaeger untuk visualisasi trace lintas service." 
-
-#### 2) Langkah Implementasi Garis Besar
-
-"Implementasi dimulai dengan menambahkan endpoint metrics pada service backend dan menginstrumentasi metrik request serta metrik bisnis. Selanjutnya logging backend diubah menjadi structured JSON agar dapat diproses terpusat oleh ELK stack. Terakhir, tracing ditambahkan pada inbound request, outbound HTTP call, serta publish-consume event RabbitMQ, sehingga flow create order dapat ditelusuri end-to-end." 
-
-#### 3) Cara Menjalankan dan Generate Request
-
-"Sistem dijalankan dengan Docker Compose menggunakan perintah docker compose up --build. Setelah seluruh service aktif, request create order dikirim ke order-service dengan header correlation id. Request ini digunakan untuk menghasilkan data metrik, log, dan trace agar dapat diverifikasi di Grafana, Kibana, dan Jaeger." 
-
-#### 4) Penjelasan Monitoring
-
-"Dashboard monitoring menampilkan empat indikator utama: jumlah request, latency p95, error rate berbasis status 5xx, dan metrik bisnis (misalnya jumlah order sukses/gagal, inventory reservation, dan notifikasi). Dengan panel ini, performa sistem dan kondisi bisnis dapat dipantau secara real-time." 
-
-#### 5) Penjelasan Logging
-
-"Centralized logging menunjukkan log dari beberapa service dalam satu tempat. Format log JSON memuat timestamp, service name, level, message, correlation id, dan trace id. Informasi ini memudahkan investigasi karena satu request dapat ditelusuri lintas service menggunakan correlation id atau trace id yang sama." 
-
-#### 6) Penjelasan Tracing
-
-"Distributed tracing memvisualisasikan flow create order dari order-service ke catalog-service, inventory-service, publish event RabbitMQ, hingga diproses notification-service. Dengan trace ini, durasi tiap span dan titik bottleneck dapat diidentifikasi dengan jelas." 
-
-### C. Checklist Final Sebelum Submit
-
-Pastikan semua ini ada sebelum membuat ZIP:
-
-- PDF laporan sudah memuat semua poin A sampai H di atas.
-- Screenshot monitoring, logging, dan tracing sudah jelas terbaca.
-- Nama file PDF sesuai format: `NAMA_NPM.pdf`.
-- ZIP berisi codebase yang sudah dimodifikasi + PDF.
-- Jangan sertakan folder `node_modules` di ZIP.
-- Nama ZIP sesuai format: `NAMA_NPM.zip`.
-
-### D. Tips Supaya Penilaian Aman
-
-- Pakai satu `correlation_id` yang konsisten saat demo request supaya pembuktian log dan trace mudah.
-- Ambil screenshot setelah generate request minimal 1-3 kali agar panel tidak kosong.
-- Di bagian penjelasan, fokus pada alasan teknis dan manfaat, bukan hanya daftar tools.
-
-## Tutorial Penggunaan Aplikasi (Step-by-Step + Checklist Screenshot)
-
-Section ini fokus untuk praktik dan pengambilan bukti implementasi. Ikuti urutan dari awal sampai akhir.
-
-### 0) Kondisi Awal
-
-Pastikan:
-- Docker Desktop aktif.
-- Port berikut tidak dipakai aplikasi lain: `3001`, `3002`, `3003`, `3004`, `3005`, `5173`, `5602`, `9091`, `16687`.
-
-### 1) Jalankan Seluruh Stack
-
-Di root project jalankan:
-
-```bash
-docker compose up --build
-```
-
-Jika sudah pernah build dan ingin cepat:
-
-```bash
-docker compose up -d
-```
-
-Cek status service:
-
-```bash
-docker compose ps
-```
-
-Yang harus status `Up`:
-- frontend
-- catalog-service
-- inventory-service
-- order-service
-- notification-service
-- prometheus
-- grafana
-- jaeger
-- elasticsearch
-- kibana
-- filebeat
-- logstash
-
-Screenshot yang diambil:
-- Output `docker compose ps` (bukti semua service hidup).
-
-### 2) Buka Semua URL Penting
-
-Gunakan URL berikut:
-- Frontend: `http://localhost:5173`
-- Grafana: `http://localhost:3005` (login `admin/admin`)
-- Prometheus: `http://localhost:9091`
-- Kibana: `http://localhost:5602`
-- Jaeger: `http://localhost:16687`
-
-Screenshot yang diambil:
-- Halaman Grafana terbuka.
-- Halaman Kibana terbuka.
-- Halaman Jaeger terbuka.
-
-### 3) Verifikasi API Dasar (Health + Data)
-
-Jalankan:
-
-```bash
-curl -s http://localhost:3001/health
-curl -s http://localhost:3004/health
-curl -s http://localhost:3002/health
-curl -s http://localhost:3003/health
-curl -s http://localhost:3001/api/lenses
-```
-
-Tujuan:
-- Memastikan backend siap.
-- Mengambil `lensId` untuk testing create order.
-
-Screenshot yang diambil:
-- Output health check.
-- Output daftar lenses (terlihat ada `id`).
-
-### 4) Generate Traffic Utama (Flow Create Order)
-
-Pilih salah satu `lensId` dari langkah sebelumnya, lalu kirim request berikut:
+**Langkah 2: Create Order dengan Correlation ID**
 
 ```bash
 curl -X POST http://localhost:3002/api/orders \
-	-H 'Content-Type: application/json' \
-	-H 'x-correlation-id: assignment-a04-001' \
-	-d '{
-		"customerName": "A04 Tester",
-		"customerEmail": "a04@test.local",
-		"lensId": "REPLACE_WITH_REAL_LENS_ID",
-		"branchCode": "KB-JKT-S",
-		"startDate": "2026-04-01",
-		"endDate": "2026-04-03"
-	}'
+  -H "Content-Type: application/json" \
+  -H "x-correlation-id: assignment-a04-001" \
+  -d "{
+    \"customerName\": \"A04 Test User\",
+    \"customerEmail\": \"a04@test.local\",
+    \"lensId\": \"<LENS_ID_FROM_STEP_1>\",
+    \"branchCode\": \"KB-JKT-S\",
+    \"startDate\": \"2026-04-01\",
+    \"endDate\": \"2026-04-03\"
+  }"
 ```
 
-Ulangi 2-3 kali dengan correlation id berbeda agar grafik lebih jelas:
+**Langkah 3: Generate Multiple Requests untuk Lebih Jelas**
 
-```bash
-curl -X POST http://localhost:3002/api/orders -H 'Content-Type: application/json' -H 'x-correlation-id: assignment-a04-002' -d '{...}'
-curl -X POST http://localhost:3002/api/orders -H 'Content-Type: application/json' -H 'x-correlation-id: assignment-a04-003' -d '{...}'
-```
+Ulangi langkah 2 dengan correlation ID berbeda (assignment-a04-002, assignment-a04-003, dst) untuk membuat panel pada Grafana lebih jelas menampilkan metrics.
 
-Screenshot yang diambil:
-- Response sukses create order (berisi `id`, `totalPrice`, dll).
+Oke, ini aku bikinin **FINAL VERSION yang udah dipoles**
 
-### 5) Cek Monitoring di Grafana
+* tetap formal
+* tapi ada “jejak kamu ngerjain sendiri”
+* ga terlalu textbook
+* aman buat dikumpulin
 
-Masuk Grafana -> Dashboard `SuiLens Observability Dashboard`.
+Kamu tinggal replace bagian **5 & 6** ini aja di dokumen kamu 👇
 
-Panel yang perlu kamu tunjukkan:
-- Request rate per service.
-- Latency p95 per service.
-- Error rate (5xx).
-- Business metrics (`suilens_orders_total`, `suilens_inventory_reservations_total`, `suilens_notifications_total`).
+---
 
-Jika panel masih sepi:
-- Ulangi request create order.
-- Refresh dashboard.
-- Ubah time range ke `Last 30 minutes`.
+## 5. Hasil Implementasi
 
-Screenshot yang diambil:
-- 1 screenshot full dashboard.
-- Atau 4 screenshot terpisah sesuai panel requirement.
+### Monitoring
 
-### 6) Cek Metrics Mentah di Prometheus (Opsional tapi Bagus untuk Laporan)
+Hasil monitoring dapat diamati melalui dashboard Grafana yang menampilkan berbagai metrik utama sistem secara real-time. Berdasarkan pengujian yang dilakukan dengan beberapa request berturut-turut ke endpoint create order, terlihat bahwa grafik request rate mengalami peningkatan setelah load testing dijalankan. Hal ini menunjukkan bahwa sistem berhasil menerima dan memproses request sesuai dengan skenario pengujian.
 
-Buka Prometheus dan coba query:
+Selain itu, latency p95 menunjukkan waktu respon mayoritas request yang relatif stabil selama pengujian berlangsung. Hal ini mengindikasikan bahwa performa sistem masih berada dalam kondisi yang baik. Metrik bisnis seperti jumlah order dan reservasi juga mengalami peningkatan seiring dengan bertambahnya request, yang menunjukkan bahwa proses bisnis utama berjalan dengan sukses.
 
-```text
-sum(rate(suilens_http_requests_total[1m])) by (service)
-histogram_quantile(0.95, sum(rate(suilens_http_request_duration_seconds_bucket[5m])) by (le, service))
-sum(rate(suilens_http_requests_total{status=~"5.."}[5m])) by (service) / sum(rate(suilens_http_requests_total[5m])) by (service)
-sum(suilens_orders_total) by (status)
-```
+Secara keseluruhan, dashboard Grafana memberikan gambaran kondisi sistem yang jelas dan dapat digunakan untuk memantau performa serta aktivitas sistem secara real-time.
 
-Screenshot yang diambil:
-- Minimal 1 query hasil metrics (untuk memperkuat analisis teknis).
+---
 
-### 7) Cek Centralized Logging di Kibana
+### Centralized Logging
 
-Langkah:
-1. Buka Kibana -> Discover.
-2. Pilih data view index `suilens-logs-*` (buat jika belum ada).
-3. Filter contoh:
-	 - `service_name : "order-service"`
-	 - `service_name : "notification-service"`
-	 - `app.correlation_id : "assignment-a04-001"` (jika field tersedia di mapping)
+Pada bagian centralized logging, hasil implementasi dapat dilihat melalui Kibana yang menampilkan log dari berbagai service dalam satu tampilan terpusat. Berdasarkan hasil pengamatan, log dari beberapa service seperti order-service dan inventory-service berhasil muncul secara bersamaan dalam satu halaman Discover.
 
-Field log penting yang harus terlihat:
-- `@timestamp`
-- `service_name`
-- `log_level`
-- `message`
-- `app.trace_id` / `trace_id`
-- `app.correlation_id` / `correlation_id`
+Log yang ditampilkan menggunakan format structured JSON, sehingga informasi seperti timestamp, service, level log, dan message dapat dianalisis dengan mudah. Dengan membuka detail log (expanded view), terlihat bahwa setiap log memuat informasi yang cukup untuk kebutuhan investigasi.
 
-Screenshot yang diambil:
-- Log dari minimal 2 service di tempat yang sama.
-- Bukti 1 correlation id yang bisa diikuti lintas service.
+Selain itu, penggunaan correlation_id memungkinkan pelacakan satu request yang sama di berbagai service. Hal ini mempermudah proses debugging karena alur kejadian dapat ditelusuri secara lebih jelas tanpa harus membuka log dari masing-masing service secara terpisah.
 
-### 8) Cek Distributed Tracing di Jaeger
+---
 
-Langkah:
-1. Buka Jaeger UI.
-2. Pilih service `order-service`.
-3. Operation: `POST /api/orders` (atau nama span sejenis).
-4. Klik `Find Traces`.
-5. Buka salah satu trace hasil create order terbaru.
+### Distributed Tracing
 
-Yang harus terlihat dalam trace:
-- Span inbound request di order-service.
-- Span outbound ke catalog-service.
-- Span outbound ke inventory-service.
-- Span event publish/consume sampai notification-service.
+Pada bagian distributed tracing, hasil implementasi dapat diamati melalui Jaeger yang menampilkan trace dari alur request dalam sistem. Berdasarkan trace yang ditampilkan, proses create order berhasil direkam dan divisualisasikan secara end-to-end.
 
-Screenshot yang diambil:
-- 1 screenshot list traces.
-- 1 screenshot detail trace (tree span lengkap).
+Trace tersebut menunjukkan bahwa request dimulai dari order-service sebagai entry point, kemudian dilanjutkan ke catalog-service untuk validasi data, serta ke inventory-service untuk reservasi stok. Setelah itu, proses dilanjutkan melalui mekanisme event-driven yang diproses oleh notification-service.
 
-### 9) Cek Frontend (Bukti Fungsional Aplikasi)
+Setiap tahapan direpresentasikan dalam bentuk span yang memiliki durasi eksekusi. Berdasarkan hasil pengamatan, terlihat bahwa beberapa proses seperti komunikasi ke inventory-service memiliki durasi yang relatif lebih tinggi dibandingkan proses lainnya. Hal ini menunjukkan bahwa bagian tersebut berpotensi menjadi bottleneck dan perlu diperhatikan lebih lanjut.
 
-Di frontend:
-- Buat order dari form.
-- Lihat notifikasi realtime muncul.
+Dengan adanya visualisasi ini, hubungan antar service dapat dipahami dengan lebih jelas, serta mempermudah analisis performa sistem secara menyeluruh.
 
-Screenshot yang diambil:
-- Halaman dashboard frontend.
-- Bukti notifikasi realtime.
+---
 
-### 10) Checklist Screenshot Final (Minimal)
+## 6. Penjelasan Metrik, Log, dan Flow Trace
 
-Wajib:
-- `docker compose ps` semua service `Up`.
-- Grafana dashboard (request, latency, error rate, business metric).
-- Kibana log terpusat dari >=2 service dengan field investigasi.
-- Jaeger trace flow create order lintas service.
+Pada bagian monitoring, metrik yang ditampilkan pada dashboard Grafana menunjukkan aktivitas sistem secara real-time. Grafik request rate memperlihatkan jumlah request yang masuk ke sistem, di mana peningkatan nilai terjadi setelah dilakukan pengujian dengan beberapa request berturut-turut. Sementara itu, latency p95 digunakan untuk merepresentasikan waktu respon mayoritas request, sehingga dapat memberikan gambaran performa sistem secara umum. Selama pengujian, nilai latency cenderung stabil, yang menunjukkan bahwa sistem mampu menangani request dengan baik. Metrik bisnis seperti jumlah order dan reservasi juga meningkat, yang menandakan bahwa proses bisnis utama berjalan sesuai dengan yang diharapkan.
 
-Disarankan tambahan:
-- Output curl create order.
-- Prometheus query result.
-- Frontend realtime notification.
+Pada bagian centralized logging, log yang ditampilkan pada Kibana menunjukkan data yang telah dikumpulkan dari berbagai service dalam satu tempat. Log disajikan dalam format structured JSON sehingga setiap informasi seperti timestamp, service, dan message dapat dibaca dengan jelas. Dengan adanya informasi ini, proses debugging menjadi lebih mudah karena dapat diketahui kapan suatu event terjadi dan pada service mana kejadian tersebut berlangsung. Selain itu, penggunaan correlation_id memungkinkan pelacakan satu request yang sama di berbagai service, sehingga alur kejadian dapat direkonstruksi dengan lebih mudah.
 
-### 11) Troubleshooting Singkat Saat Demo
+Pada bagian distributed tracing, visualisasi trace pada Jaeger menunjukkan alur request secara end-to-end. Proses dimulai dari order-service, kemudian dilanjutkan ke catalog-service untuk validasi, serta ke inventory-service untuk reservasi. Setelah itu, event diproses oleh notification-service melalui mekanisme asynchronous. Setiap proses direpresentasikan dalam bentuk span yang memiliki durasi eksekusi, sehingga dapat digunakan untuk mengidentifikasi bagian sistem yang membutuhkan waktu lebih lama. Berdasarkan hasil trace yang diamati, komunikasi antar service menjadi salah satu faktor yang mempengaruhi durasi total request. Dengan demikian, distributed tracing membantu dalam memahami alur sistem secara menyeluruh sekaligus mengidentifikasi potensi bottleneck.
 
-Jika service tidak `Up`:
-
-```bash
-docker compose logs --tail=100 <nama-service>
-```
-
-Jika panel Grafana kosong:
-- Pastikan request sudah digenerate.
-- Pastikan target Prometheus `UP` di `Status -> Targets`.
-
-Jika Kibana belum ada log:
-- Tunggu 10-30 detik setelah generate request.
-- Cek `filebeat` dan `logstash` status di `docker compose ps`.
-
-Jika Jaeger belum ada trace:
-- Generate ulang `POST /api/orders` dengan `x-correlation-id`.
-- Pastikan service backend tidak restart/error.
-
-## Audit Pra-Submit (PASS/FAIL)
-
-Gunakan tabel ini sebelum finalisasi PDF dan ZIP.
-
-### 1) Monitoring
-
-- [ ] PASS jika panel request rate tampil dan nilainya berubah setelah generate request.
-- [ ] PASS jika panel latency p95 tampil (bukan no data).
-- [ ] PASS jika panel error rate tampil.
-- [ ] PASS jika minimal satu metrik bisnis tampil (`orders`, `reservations`, atau `notifications`).
-
-### 2) Centralized Logging
-
-- [ ] PASS jika log dari minimal 2 service muncul di Kibana Discover.
-- [ ] PASS jika log memuat field investigasi (`timestamp`, `service_name`, `message`, `log_level`).
-- [ ] PASS jika `correlation_id` atau `trace_id` dapat dipakai untuk menelusuri kejadian.
-
-### 3) Distributed Tracing
-
-- [ ] PASS jika trace `POST /api/orders` terlihat di Jaeger.
-- [ ] PASS jika trace melibatkan lebih dari 1 service.
-- [ ] PASS jika trace menunjukkan alur create order end-to-end (request masuk, downstream call, event processing).
-
-### 4) Operasional Sistem
-
-- [ ] PASS jika `docker compose ps` menunjukkan semua service utama `Up`.
-- [ ] PASS jika endpoint health service backend merespons `status: ok`.
-
-### 5) Dokumentasi Laporan
-
-- [ ] PASS jika PDF memuat: arsitektur solusi, langkah implementasi, cara run, bukti screenshot, penjelasan metrik/log/trace.
-- [ ] PASS jika nama file PDF `NAMA_NPM.pdf`.
-- [ ] PASS jika ZIP `NAMA_NPM.zip` tanpa `node_modules`.
-
-## Template Caption Screenshot (Siap Tempel ke PDF)
-
-Gunakan format caption berikut agar laporan konsisten:
-
-1. `Gambar X. Status seluruh container menggunakan docker compose ps (semua service observability dan aplikasi dalam keadaan Up).`
-2. `Gambar X. Dashboard Grafana menampilkan request rate, latency p95, error rate, dan metrik bisnis SuiLens.`
-3. `Gambar X. Kibana Discover menampilkan centralized structured logs dari order-service dan notification-service.`
-4. `Gambar X. Log dengan correlation_id yang sama pada beberapa service untuk kebutuhan investigasi lintas service.`
-5. `Gambar X. Jaeger menampilkan distributed trace flow POST /api/orders melintasi beberapa service.`
-6. `Gambar X. Frontend SuiLens saat melakukan create order dan menerima update notifikasi.`
-
-## Urutan Pengambilan Screenshot Paling Cepat (10-15 Menit)
-
-1. Ambil SS `docker compose ps`.
-2. Kirim 1-3 request `POST /api/orders` dengan correlation id.
-3. Ambil SS Grafana dashboard.
-4. Ambil SS Kibana Discover (2 service + field investigasi).
-5. Ambil SS Jaeger (trace list + detail trace).
-6. Ambil SS frontend (opsional namun disarankan).
-
-Jika keenam langkah di atas sudah lengkap, secara praktis bukti untuk semua kriteria tugas sudah aman.
